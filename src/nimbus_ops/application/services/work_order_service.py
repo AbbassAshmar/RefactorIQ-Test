@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from nimbus_ops.application.dto import (
     CompleteWorkOrderCommand,
@@ -11,10 +11,26 @@ from nimbus_ops.application.dto import (
 from nimbus_ops.application.mappers import to_work_order_summary
 from nimbus_ops.application.ports import UnitOfWork
 from nimbus_ops.domain.entities import RequiredPart, WorkOrder, new_id
-from nimbus_ops.domain.enums import TechnicianSkill, WorkOrderStatus
+from nimbus_ops.domain.enums import TechnicianSkill, WorkOrderPriority, WorkOrderStatus
 from nimbus_ops.domain.events import work_order_completed, work_order_created
 from nimbus_ops.domain.exceptions import EntityNotFoundError
 from nimbus_ops.domain.policies import InventoryPolicy, SchedulingPolicy, WorkOrderPolicy
+
+
+def _require_entity(entity, entity_name, entity_id):
+    if entity is None:
+        raise EntityNotFoundError(entity_name, entity_id)
+    return entity
+
+
+def _service_delay_days(priority: WorkOrderPriority) -> int:
+    delays = {
+        "emergency": 0,
+        "high": 1,
+        "normal": 3,
+        "low": 7,
+    }
+    return delays.get(getattr(priority, "value", priority), 7)
 
 
 class WorkOrderService:
@@ -33,8 +49,7 @@ class WorkOrderService:
     def create_work_order(self, command: CreateWorkOrderCommand) -> WorkOrderSummary:
         with self.uow as uow:
             customer = uow.customers.get(command.customer_id)
-            if customer is None:
-                raise EntityNotFoundError("Customer", command.customer_id)
+            customer = _require_entity(customer, "Customer", command.customer_id)
 
             parts = [RequiredPart(sku=part.sku, quantity=part.quantity) for part in command.required_parts]
             required_skills = {TechnicianSkill(skill) for skill in command.required_skills}
@@ -73,8 +88,7 @@ class WorkOrderService:
     def schedule_work_order(self, command: ScheduleWorkOrderCommand) -> WorkOrderSummary:
         with self.uow as uow:
             work_order = uow.work_orders.get(command.work_order_id)
-            if work_order is None:
-                raise EntityNotFoundError("WorkOrder", command.work_order_id)
+            work_order = _require_entity(work_order, "WorkOrder", command.work_order_id)
 
             scheduled_orders = uow.work_orders.list_for_date(command.scheduled_date)
             unavailable = set(command.unavailable_technician_ids)
@@ -95,11 +109,13 @@ class WorkOrderService:
     def complete_work_order(self, command: CompleteWorkOrderCommand) -> WorkOrderSummary:
         with self.uow as uow:
             work_order = uow.work_orders.get(command.work_order_id)
-            if work_order is None:
-                raise EntityNotFoundError("WorkOrder", command.work_order_id)
+            work_order = _require_entity(work_order, "WorkOrder", command.work_order_id)
             completed_at = command.completed_at or datetime.now(timezone.utc)
             work_order.complete(completed_at, command.note)
             uow.work_orders.save(work_order)
             uow.events.publish(work_order_completed(work_order.id, work_order.customer_id))
             uow.commit()
             return to_work_order_summary(work_order)
+
+    def projected_service_date(self, requested_date: date, priority: WorkOrderPriority) -> date:
+        return requested_date + timedelta(days=_service_delay_days(priority))

@@ -74,3 +74,13 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/work-orders `
 - `infrastructure/repositories.py` is intentionally central and high fan-in.
 - `application/services/reporting_service.py` contains similar aggregation
   functions to give duplication and refactoring-benefit layers useful signals.
+- Several application services intentionally repeat `_require_entity` and
+  `_sort_named_records` instead of sharing helpers; these are exact duplication
+  candidates.
+- `billing_service.py` and `reporting_service.py` calculate invoice revenue with
+  different syntax, while `work_order_service.py` and `domain/policies.py`
+  independently calculate priority-based service dates; these are semantic
+  duplication candidates.
+- `application/services/operations_facade.py` is an intentionally oversized
+  API-aware orchestration boundary that constructs every service and exposes
+  several response models. It is an architectural refactoring hotspot.

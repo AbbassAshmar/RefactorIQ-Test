@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from decimal import Decimal
 
 from nimbus_ops.application.dto import InvoiceSummary
 from nimbus_ops.application.mappers import to_invoice_summary
@@ -12,6 +13,17 @@ from nimbus_ops.domain.exceptions import EntityNotFoundError
 from nimbus_ops.domain.value_objects import Money
 
 
+def _require_entity(entity, entity_name, entity_id):
+    if entity is None:
+        raise EntityNotFoundError(entity_name, entity_id)
+    return entity
+
+
+def _sum_invoice_revenue(invoices, statuses):
+    matching_totals = [invoice.subtotal().amount for invoice in invoices if invoice.status in statuses]
+    return sum(matching_totals, Decimal("0.00"))
+
+
 class BillingService:
     def __init__(self, uow: UnitOfWork) -> None:
         self.uow = uow
@@ -19,8 +31,7 @@ class BillingService:
     def create_invoice_from_work_order(self, work_order_id: str, issued_on: date) -> InvoiceSummary:
         with self.uow as uow:
             work_order = uow.work_orders.get(work_order_id)
-            if work_order is None:
-                raise EntityNotFoundError("WorkOrder", work_order_id)
+            work_order = _require_entity(work_order, "WorkOrder", work_order_id)
             if work_order.status != WorkOrderStatus.COMPLETED:
                 raise ValueError("Only completed work orders can be invoiced.")
 
@@ -56,3 +67,7 @@ class BillingService:
     def list_invoices(self) -> list[InvoiceSummary]:
         with self.uow as uow:
             return [to_invoice_summary(invoice) for invoice in uow.invoices.list()]
+
+    def revenue_for_statuses(self, statuses: set[InvoiceStatus]) -> Decimal:
+        with self.uow as uow:
+            return _sum_invoice_revenue(uow.invoices.list(), statuses)

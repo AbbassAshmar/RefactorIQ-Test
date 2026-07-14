@@ -5,6 +5,7 @@ from fastapi import Depends, Header, HTTPException, status
 from nimbus_ops.application.services.billing_service import BillingService
 from nimbus_ops.application.services.customer_service import CustomerService
 from nimbus_ops.application.services.inventory_service import InventoryService
+from nimbus_ops.application.services.operations_facade import OperationsFacade
 from nimbus_ops.application.services.reporting_service import ReportingService
 from nimbus_ops.application.services.work_order_service import WorkOrderService
 from nimbus_ops.core.config import Settings, get_settings
@@ -26,21 +27,25 @@ def get_uow(settings: Settings = Depends(get_settings)) -> SQLiteUnitOfWork:
     return SQLiteUnitOfWork(settings.database_path)
 
 
-def get_customer_service(uow: SQLiteUnitOfWork = Depends(get_uow)) -> CustomerService:
-    return CustomerService(uow)
+def get_operations_facade(uow: SQLiteUnitOfWork = Depends(get_uow)) -> OperationsFacade:
+    return OperationsFacade(uow)
 
 
-def get_work_order_service(uow: SQLiteUnitOfWork = Depends(get_uow)) -> WorkOrderService:
-    return WorkOrderService(uow)
+def get_customer_service(facade: OperationsFacade = Depends(get_operations_facade)) -> CustomerService:
+    return facade.customer_service
 
 
-def get_inventory_service(uow: SQLiteUnitOfWork = Depends(get_uow)) -> InventoryService:
-    return InventoryService(uow)
+def get_work_order_service(facade: OperationsFacade = Depends(get_operations_facade)) -> WorkOrderService:
+    return facade.work_order_service
 
 
-def get_billing_service(uow: SQLiteUnitOfWork = Depends(get_uow)) -> BillingService:
-    return BillingService(uow)
+def get_inventory_service(facade: OperationsFacade = Depends(get_operations_facade)) -> InventoryService:
+    return facade.inventory_service
 
 
-def get_reporting_service(uow: SQLiteUnitOfWork = Depends(get_uow)) -> ReportingService:
-    return ReportingService(uow)
+def get_billing_service(facade: OperationsFacade = Depends(get_operations_facade)) -> BillingService:
+    return facade.billing_service
+
+
+def get_reporting_service(facade: OperationsFacade = Depends(get_operations_facade)) -> ReportingService:
+    return facade.reporting_service
