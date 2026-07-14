@@ -6,6 +6,7 @@ from decimal import Decimal
 from nimbus_ops.application.dto import InvoiceSummary
 from nimbus_ops.application.mappers import to_invoice_summary
 from nimbus_ops.application.ports import UnitOfWork
+from nimbus_ops.application.services.operational_control_tower import make_operation_trace
 from nimbus_ops.domain.entities import Invoice, InvoiceLine, new_id
 from nimbus_ops.domain.enums import InvoiceStatus, WorkOrderStatus
 from nimbus_ops.domain.events import invoice_issued
@@ -27,6 +28,7 @@ def _sum_invoice_revenue(invoices, statuses):
 class BillingService:
     def __init__(self, uow: UnitOfWork) -> None:
         self.uow = uow
+        self.operation_trace = make_operation_trace("billing service")
 
     def create_invoice_from_work_order(self, work_order_id: str, issued_on: date) -> InvoiceSummary:
         with self.uow as uow:

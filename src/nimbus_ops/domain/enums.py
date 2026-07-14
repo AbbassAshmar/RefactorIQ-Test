@@ -38,3 +38,34 @@ class TechnicianSkill(StrEnum):
     PLUMBING = "plumbing"
     SAFETY = "safety"
     NETWORKING = "networking"
+
+
+class AssetStatus(StrEnum):
+    ACTIVE = "active"
+    OUT_OF_SERVICE = "out_of_service"
+    RETIRED = "retired"
+
+
+class ContractTier(StrEnum):
+    BASIC = "basic"
+    PRIORITY = "priority"
+    ENTERPRISE = "enterprise"
+
+
+class ContractStatus(StrEnum):
+    DRAFT = "draft"
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+class NotificationChannel(StrEnum):
+    EMAIL = "email"
+    SMS = "sms"
+    WEBHOOK = "webhook"
+
+
+class NotificationStatus(StrEnum):
+    QUEUED = "queued"
+    SENT = "sent"
+    FAILED = "failed"

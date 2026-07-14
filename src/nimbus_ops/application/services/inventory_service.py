@@ -3,6 +3,7 @@ from __future__ import annotations
 from nimbus_ops.application.dto import InventoryHealth
 from nimbus_ops.application.mappers import to_inventory_health
 from nimbus_ops.application.ports import UnitOfWork
+from nimbus_ops.application.services.operational_control_tower import make_operation_trace
 from nimbus_ops.domain.exceptions import EntityNotFoundError
 
 
@@ -21,6 +22,7 @@ def _sort_named_records(records):
 class InventoryService:
     def __init__(self, uow: UnitOfWork) -> None:
         self.uow = uow
+        self.operation_trace = make_operation_trace("inventory service")
 
     def list_inventory_health(self) -> list[InventoryHealth]:
         with self.uow as uow:

@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from nimbus_ops.application.ports import UnitOfWork
+from nimbus_ops.application.services.operational_control_tower import make_operation_trace
 from nimbus_ops.domain.enums import InvoiceStatus, WorkOrderPriority, WorkOrderStatus
 
 
@@ -21,6 +22,7 @@ class OperationsReport:
 class ReportingService:
     def __init__(self, uow: UnitOfWork) -> None:
         self.uow = uow
+        self.operation_trace = make_operation_trace("reporting service")
 
     def operations_report(self) -> OperationsReport:
         with self.uow as uow:

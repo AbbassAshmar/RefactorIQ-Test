@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 
 from nimbus_ops.application.services.customer_service import CustomerService
 from nimbus_ops.interfaces.api.dependencies import get_customer_service
@@ -10,8 +10,11 @@ router = APIRouter()
 
 
 @router.get("", response_model=list[CustomerResponse])
-def list_customers(service: CustomerService = Depends(get_customer_service)) -> list[CustomerResponse]:
-    customers = service.list_customers()
+def list_customers(
+    query: str | None = Query(default=None),
+    service: CustomerService = Depends(get_customer_service),
+) -> list[CustomerResponse]:
+    customers = service.list_customers(query)
     return [
         CustomerResponse(
             id=customer.id,

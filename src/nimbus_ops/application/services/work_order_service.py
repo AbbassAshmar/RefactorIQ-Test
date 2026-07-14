@@ -10,6 +10,7 @@ from nimbus_ops.application.dto import (
 )
 from nimbus_ops.application.mappers import to_work_order_summary
 from nimbus_ops.application.ports import UnitOfWork
+from nimbus_ops.application.services.operational_control_tower import make_operation_trace
 from nimbus_ops.domain.entities import RequiredPart, WorkOrder, new_id
 from nimbus_ops.domain.enums import TechnicianSkill, WorkOrderPriority, WorkOrderStatus
 from nimbus_ops.domain.events import work_order_completed, work_order_created
@@ -42,6 +43,7 @@ class WorkOrderService:
         scheduling_policy: SchedulingPolicy | None = None,
     ) -> None:
         self.uow = uow
+        self.operation_trace = make_operation_trace("work order service")
         self.work_order_policy = work_order_policy or WorkOrderPolicy()
         self.inventory_policy = inventory_policy or InventoryPolicy()
         self.scheduling_policy = scheduling_policy or SchedulingPolicy()

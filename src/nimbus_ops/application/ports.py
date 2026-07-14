@@ -3,8 +3,11 @@ from __future__ import annotations
 from datetime import date
 from typing import Protocol
 
+from nimbus_ops.domain.assets import Asset
+from nimbus_ops.domain.contracts import ServiceContract
 from nimbus_ops.domain.entities import Customer, InventoryItem, Invoice, Technician, WorkOrder
 from nimbus_ops.domain.events import DomainEvent
+from nimbus_ops.domain.notifications import Notification
 
 
 class CustomerRepository(Protocol):
@@ -45,6 +48,30 @@ class InvoiceRepository(Protocol):
     def save(self, invoice: Invoice) -> None: ...
 
 
+class AssetRepository(Protocol):
+    def get(self, asset_id: str) -> Asset | None: ...
+
+    def list(self, customer_id: str | None = None) -> list[Asset]: ...
+
+    def save(self, asset: Asset) -> None: ...
+
+
+class ContractRepository(Protocol):
+    def get(self, contract_id: str) -> ServiceContract | None: ...
+
+    def list(self, customer_id: str | None = None) -> list[ServiceContract]: ...
+
+    def save(self, contract: ServiceContract) -> None: ...
+
+
+class NotificationRepository(Protocol):
+    def get(self, notification_id: str) -> Notification | None: ...
+
+    def list(self, customer_id: str | None = None) -> list[Notification]: ...
+
+    def save(self, notification: Notification) -> None: ...
+
+
 class EventPublisher(Protocol):
     def publish(self, event: DomainEvent) -> None: ...
 
@@ -55,6 +82,9 @@ class UnitOfWork(Protocol):
     inventory: InventoryRepository
     technicians: TechnicianRepository
     invoices: InvoiceRepository
+    assets: AssetRepository
+    contracts: ContractRepository
+    notifications: NotificationRepository
     events: EventPublisher
 
     def __enter__(self) -> "UnitOfWork": ...

@@ -75,6 +75,45 @@ CREATE TABLE IF NOT EXISTS outbox_events (
     payload TEXT NOT NULL,
     occurred_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS assets (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    serial_number TEXT NOT NULL UNIQUE,
+    category TEXT NOT NULL,
+    installed_on TEXT NOT NULL,
+    last_service_date TEXT,
+    service_interval_days INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    site_address TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS service_contracts (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    status TEXT NOT NULL,
+    starts_on TEXT NOT NULL,
+    ends_on TEXT NOT NULL,
+    monthly_limit_amount TEXT NOT NULL,
+    currency TEXT NOT NULL,
+    included_hours INTEGER NOT NULL,
+    auto_renew INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    body TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    sent_at TEXT
+);
 """
 
 

@@ -7,6 +7,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from nimbus_ops.application.ports import UnitOfWork
+from nimbus_ops.infrastructure.asset_repository import SQLiteAssetRepository
+from nimbus_ops.infrastructure.contract_repository import SQLiteContractRepository
 from nimbus_ops.domain.entities import (
     Customer,
     InventoryItem,
@@ -26,6 +28,7 @@ from nimbus_ops.domain.enums import (
 from nimbus_ops.domain.events import DomainEvent
 from nimbus_ops.domain.value_objects import Address, Money
 from nimbus_ops.infrastructure.database import connect
+from nimbus_ops.infrastructure.notification_repository import SQLiteNotificationRepository
 
 
 def _json_list(value: str | None) -> list[object]:
@@ -387,6 +390,9 @@ class SQLiteUnitOfWork(UnitOfWork):
         self.inventory = SQLiteInventoryRepository(self.connection)
         self.technicians = SQLiteTechnicianRepository(self.connection)
         self.invoices = SQLiteInvoiceRepository(self.connection)
+        self.assets = SQLiteAssetRepository(self.connection)
+        self.contracts = SQLiteContractRepository(self.connection)
+        self.notifications = SQLiteNotificationRepository(self.connection)
         self.events = SQLiteEventPublisher(self.connection)
         return self
 

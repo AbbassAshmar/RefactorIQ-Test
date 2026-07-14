@@ -38,6 +38,14 @@ Useful endpoints:
 - `POST /api/work-orders/{work_order_id}/complete`
 - `POST /api/invoices/from-work-order/{work_order_id}`
 - `GET /api/reports/operations`
+- `GET /api/assets` and `POST /api/assets`
+- `GET /api/assets/due`
+- `GET /api/contracts` and `POST /api/contracts`
+- `GET /api/contracts/{contract_id}/coverage`
+- `GET /api/notifications` and `POST /api/notifications`
+- `GET /api/admin/operations/summary`
+- `GET /api/admin/operations/control-tower`
+- `GET /api/admin/operations/export`
 
 ## Tests
 
@@ -84,3 +92,18 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/work-orders `
 - `application/services/operations_facade.py` is an intentionally oversized
   API-aware orchestration boundary that constructs every service and exposes
   several response models. It is an architectural refactoring hotspot.
+- Asset lifecycle, contract management, and notification delivery each have
+  separate domain, DTO, mapper, repository, service, schema, and router files.
+  Their repeated search, entity lookup, due-date, serialization, and status
+  handling logic is intentionally distributed across layers to mimic a growing
+  production codebase.
+- The fixture also contains intentional `TYPE_CHECKING` dependency cycles for
+  architecture testing: domain models point back to their services, the asset
+  repository points back to the repository aggregate, and API schemas point back
+  to the operations façade. These imports are visible to the AST dependency
+  graph but do not execute at runtime.
+- `application/services/operational_control_tower.py` and
+  `infrastructure/legacy_operations_exporter.py` are intentionally high-risk
+  refactoring targets: they combine customer, work-order, inventory, asset,
+  contract, invoice, technician, and notification data with nested loops,
+  deeply branched scoring, repeated grouping, and overlapping export logic.

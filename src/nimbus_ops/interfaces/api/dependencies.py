@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from fastapi import Depends, Header, HTTPException, status
 
+from nimbus_ops.application.services.asset_service import AssetService
 from nimbus_ops.application.services.billing_service import BillingService
 from nimbus_ops.application.services.customer_service import CustomerService
+from nimbus_ops.application.services.contract_service import ContractService
 from nimbus_ops.application.services.inventory_service import InventoryService
+from nimbus_ops.application.services.notification_service import NotificationService
 from nimbus_ops.application.services.operations_facade import OperationsFacade
 from nimbus_ops.application.services.reporting_service import ReportingService
 from nimbus_ops.application.services.work_order_service import WorkOrderService
@@ -33,6 +36,18 @@ def get_operations_facade(uow: SQLiteUnitOfWork = Depends(get_uow)) -> Operation
 
 def get_customer_service(facade: OperationsFacade = Depends(get_operations_facade)) -> CustomerService:
     return facade.customer_service
+
+
+def get_asset_service(facade: OperationsFacade = Depends(get_operations_facade)) -> AssetService:
+    return facade.asset_service
+
+
+def get_contract_service(facade: OperationsFacade = Depends(get_operations_facade)) -> ContractService:
+    return facade.contract_service
+
+
+def get_notification_service(facade: OperationsFacade = Depends(get_operations_facade)) -> NotificationService:
+    return facade.notification_service
 
 
 def get_work_order_service(facade: OperationsFacade = Depends(get_operations_facade)) -> WorkOrderService:

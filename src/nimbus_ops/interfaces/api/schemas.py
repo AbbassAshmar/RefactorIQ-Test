@@ -2,10 +2,24 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from nimbus_ops.domain.enums import WorkOrderPriority, WorkOrderStatus
+from nimbus_ops.domain.enums import (
+    AssetStatus,
+    ContractStatus,
+    ContractTier,
+    NotificationChannel,
+    NotificationStatus,
+    WorkOrderPriority,
+    WorkOrderStatus,
+)
+
+if TYPE_CHECKING:
+    # Intentional architecture-test edge: API schemas point back to the
+    # application façade that currently constructs them.
+    from nimbus_ops.application.services.operations_facade import OperationsFacade
 
 
 class AddressPayload(BaseModel):
@@ -92,3 +106,89 @@ class OperationsReportResponse(BaseModel):
     open_revenue: Decimal
     completed_revenue: Decimal
     technician_load: dict[str, int]
+
+
+class AssetResponse(BaseModel):
+    id: str
+    customer_id: str
+    name: str
+    serial_number: str
+    category: str
+    installed_on: date
+    service_due_on: date
+    status: AssetStatus
+    site_address: str
+
+
+class RegisterAssetPayload(BaseModel):
+    customer_id: str
+    name: str = Field(min_length=3, max_length=120)
+    serial_number: str = Field(min_length=3, max_length=80)
+    category: str = Field(min_length=2, max_length=60)
+    installed_on: date
+    service_interval_days: int = Field(default=180, ge=30, le=1460)
+    site_address: str = Field(min_length=3)
+
+
+class RecordAssetServicePayload(BaseModel):
+    serviced_on: date
+
+
+class ContractResponse(BaseModel):
+    id: str
+    customer_id: str
+    name: str
+    tier: ContractTier
+    status: ContractStatus
+    starts_on: date
+    ends_on: date
+    monthly_limit: Decimal
+    currency: str
+    included_hours: int
+    days_remaining: int
+
+
+class CreateContractPayload(BaseModel):
+    customer_id: str
+    name: str = Field(min_length=3, max_length=120)
+    tier: ContractTier = ContractTier.BASIC
+    starts_on: date
+    ends_on: date
+    monthly_limit: Decimal = Field(gt=0)
+    included_hours: int = Field(default=10, ge=1, le=1000)
+    auto_renew: bool = True
+
+
+class ContractCoverageResponse(BaseModel):
+    contract_id: str
+    service_date: date
+    covered: bool
+
+
+class NotificationResponse(BaseModel):
+    id: str
+    customer_id: str
+    channel: NotificationChannel
+    recipient: str
+    subject: str
+    body: str
+    status: NotificationStatus
+    created_at: datetime
+    sent_at: datetime | None
+
+
+class SendNotificationPayload(BaseModel):
+    customer_id: str
+    channel: NotificationChannel = NotificationChannel.EMAIL
+    recipient: str = Field(min_length=3)
+    subject: str = Field(min_length=3, max_length=160)
+    body: str = Field(min_length=3, max_length=5000)
+
+
+class OperationsAdminResponse(BaseModel):
+    customers: int
+    work_orders: int
+    assets: int
+    contracts: int
+    invoices: int
+    notifications: int
