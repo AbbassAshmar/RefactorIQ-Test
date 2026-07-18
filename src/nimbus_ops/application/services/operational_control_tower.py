@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 from nimbus_ops.domain.assets import Asset
@@ -44,6 +45,45 @@ def make_operation_trace(scope: str) -> dict[str, str]:
 def _normalize_identifier(value):
     normalized = str(value).strip().casefold()
     return normalized.replace(" ", "_")
+
+
+def _dispatch_sla_target_days(priority: WorkOrderPriority) -> int:
+    if priority == WorkOrderPriority.EMERGENCY:
+        return 0
+    if priority == WorkOrderPriority.HIGH:
+        return 1
+    if priority == WorkOrderPriority.NORMAL:
+        return 3
+    return 7
+
+
+def _dispatch_queue_name(
+    priority: WorkOrderPriority,
+    breach_days: int,
+    risk_score: int,
+    blockers: list[str],
+) -> str:
+    if (
+        priority == WorkOrderPriority.EMERGENCY
+        or breach_days > 0
+        or risk_score >= 75
+        or "customer_delinquent" in blockers
+    ):
+        return "escalated"
+    if blockers:
+        return "blocked"
+    return "ready"
+
+
+def _dispatch_estimated_costs(
+    labor_currency: str,
+    labor_amount: float,
+    part_costs: list[tuple[str, float]],
+) -> dict[str, float]:
+    totals = {labor_currency: labor_amount}
+    for currency, amount in part_costs:
+        totals[currency] = totals.get(currency, 0.0) + amount
+    return {currency: round(amount, 2) for currency, amount in totals.items()}
 
 
 class OperationalControlTower:
@@ -199,10 +239,34 @@ class OperationalControlTower:
 
     def prioritize_backlog(self, snapshot: ControlTowerSnapshot) -> list[dict[str, Any]]:
         candidates = []
+        customers_by_id = {customer.id: customer for customer in snapshot.customers}
+        inventory_by_sku = {item.sku: item for item in snapshot.inventory}
         for order in snapshot.work_orders:
-            if order.status in {WorkOrderStatus.COMPLETED, WorkOrderStatus.CANCELLED}:
+            if order.status not in {WorkOrderStatus.DRAFT, WorkOrderStatus.READY}:
                 continue
-            score = self._work_order_risk(order, None, [], [], snapshot.as_of)
+            part_risks = []
+            for part in order.required_parts:
+                item = inventory_by_sku.get(part.sku)
+                if item is None or not item.active:
+                    part_risks.append(
+                        {
+                            "sku": part.sku,
+                            "required": part.quantity,
+                            "available": 0 if item is None else item.quantity_on_hand,
+                        }
+                    )
+            technician_options = [
+                technician.id
+                for technician in snapshot.technicians
+                if technician.can_handle(order.required_skills, order.estimated_hours)
+            ]
+            score = self._work_order_risk(
+                order,
+                customers_by_id.get(order.customer_id),
+                part_risks,
+                technician_options,
+                snapshot.as_of,
+            )
             for asset in snapshot.assets:
                 if asset.customer_id == order.customer_id and asset.needs_service(snapshot.as_of):
                     score += 10
@@ -211,6 +275,360 @@ class OperationalControlTower:
                             score += 5
             candidates.append({"work_order_id": order.id, "priority_score": min(score, 100)})
         return sorted(candidates, key=lambda candidate: (-candidate["priority_score"], candidate["work_order_id"]))
+
+    def build_dispatch_plan(
+        self,
+        snapshot: ControlTowerSnapshot,
+        horizon_days: int = 14,
+        include_scheduled: bool = False,
+    ) -> dict[str, Any]:
+        """Build the legacy cross-domain dispatch board used by operations.
+
+        The implementation grew inside the control tower because the first
+        version had to ship before the dispatch domain was separated. It now
+        mixes SLA policy, customer credit checks, contract coverage, inventory,
+        technician capacity, asset maintenance, and invoice exposure.
+        """
+        if horizon_days < 1 or horizon_days > 90:
+            raise ValueError("Dispatch horizon must be between 1 and 90 days.")
+
+        customers_by_id = {customer.id: customer for customer in snapshot.customers}
+        inventory_by_sku = {item.sku: item for item in snapshot.inventory}
+        contracts_by_customer = self._group_contracts_by_customer(snapshot.contracts)
+        assets_by_customer = self._group_assets_by_customer(snapshot.assets)
+        reserved_hours: dict[tuple[str, date], int] = {}
+        horizon_end = snapshot.as_of + timedelta(days=horizon_days - 1)
+        ready: list[dict[str, Any]] = []
+        blocked: list[dict[str, Any]] = []
+        escalated: list[dict[str, Any]] = []
+
+        for scheduled_order in snapshot.work_orders:
+            if (
+                scheduled_order.assigned_technician_id
+                and scheduled_order.scheduled_date
+                and snapshot.as_of <= scheduled_order.scheduled_date <= horizon_end
+                and scheduled_order.status
+                in {WorkOrderStatus.SCHEDULED, WorkOrderStatus.IN_PROGRESS}
+            ):
+                technician_id = scheduled_order.assigned_technician_id
+                capacity_key = (technician_id, scheduled_order.scheduled_date)
+                reserved_hours[capacity_key] = (
+                    reserved_hours.get(capacity_key, 0)
+                    + scheduled_order.estimated_hours
+                )
+
+        priority_order = {
+            WorkOrderPriority.EMERGENCY: 0,
+            WorkOrderPriority.HIGH: 1,
+            WorkOrderPriority.NORMAL: 2,
+            WorkOrderPriority.LOW: 3,
+        }
+        dispatch_orders = sorted(
+            snapshot.work_orders,
+            key=lambda order: (
+                order.requested_date
+                + timedelta(days=_dispatch_sla_target_days(order.priority)),
+                priority_order[order.priority],
+                order.requested_date,
+                order.id,
+            ),
+        )
+        for order in dispatch_orders:
+            if order.status in {WorkOrderStatus.COMPLETED, WorkOrderStatus.CANCELLED}:
+                continue
+            if order.status in {WorkOrderStatus.SCHEDULED, WorkOrderStatus.IN_PROGRESS}:
+                if not include_scheduled:
+                    continue
+                if order.scheduled_date and order.scheduled_date > horizon_end:
+                    continue
+
+            customer = customers_by_id.get(order.customer_id)
+            blockers: list[str] = []
+            warnings: list[str] = []
+            shortages: list[dict[str, int | str]] = []
+            technician_options: list[dict[str, int | str]] = []
+            covered_contract_ids: list[str] = []
+            overdue_asset_ids: list[str] = []
+            estimated_part_costs: list[tuple[str, float]] = []
+            open_invoice_amounts: dict[str, float] = {}
+            open_invoice_count = 0
+            customer_risk_tier = "standard"
+
+            age_days = max((snapshot.as_of - order.requested_date).days, 0)
+            target_days = _dispatch_sla_target_days(order.priority)
+            sla_due_on = order.requested_date + timedelta(days=target_days)
+            breach_days = max((snapshot.as_of - sla_due_on).days, 0)
+
+            if customer is None:
+                customer_risk_tier = "unknown"
+                blockers.append("customer_missing")
+            elif customer.status == CustomerStatus.DELINQUENT:
+                customer_risk_tier = "delinquent"
+                blockers.append("customer_delinquent")
+            elif customer.status == CustomerStatus.PAUSED:
+                customer_risk_tier = "paused"
+                blockers.append("customer_paused")
+            elif customer.outstanding_balance.amount >= customer.credit_limit.amount:
+                customer_risk_tier = "credit_hold"
+                blockers.append("credit_limit_reached")
+            elif (
+                customer.outstanding_balance.amount
+                >= customer.credit_limit.amount * Decimal("0.85")
+            ):
+                customer_risk_tier = "credit_watch"
+                warnings.append("credit_limit_near")
+            elif "priority" in customer.tags:
+                customer_risk_tier = "priority"
+
+            service_date = order.scheduled_date or snapshot.as_of
+            dispatch_date = order.scheduled_date or snapshot.as_of
+            for contract in contracts_by_customer.get(order.customer_id, []):
+                if contract.covers(service_date):
+                    covered_contract_ids.append(contract.id)
+                elif (
+                    contract.status == ContractStatus.ACTIVE
+                    and contract.ends_on < service_date
+                    and (service_date - contract.ends_on).days <= 30
+                ):
+                    warnings.append("contract_recently_expired")
+            if not covered_contract_ids:
+                warnings.append("contract_uncovered")
+
+            for asset in assets_by_customer.get(order.customer_id, []):
+                if asset.needs_service(snapshot.as_of):
+                    overdue_asset_ids.append(asset.id)
+                    if asset.category.casefold() in order.title.casefold():
+                        warnings.append("related_asset_overdue")
+
+            for part in order.required_parts:
+                item = inventory_by_sku.get(part.sku)
+                if item is None:
+                    shortages.append(
+                        {
+                            "sku": part.sku,
+                            "required": part.quantity,
+                            "available": 0,
+                        }
+                    )
+                    blockers.append("part_missing")
+                else:
+                    estimated_part_costs.append(
+                        (
+                            item.unit_cost.currency,
+                            float(item.unit_cost.amount) * part.quantity,
+                        )
+                    )
+                    if not item.active:
+                        blockers.append("part_inactive")
+                    if item.quantity_on_hand <= item.reorder_point:
+                        warnings.append("stock_below_reorder_after_dispatch")
+
+            for technician in snapshot.technicians:
+                if not technician.active:
+                    continue
+                missing_skills = [
+                    skill.value
+                    for skill in order.required_skills
+                    if skill not in technician.skills
+                ]
+                available_hours = max(
+                    technician.daily_capacity_hours
+                    - reserved_hours.get((technician.id, dispatch_date), 0),
+                    0,
+                )
+                is_current_assignment = (
+                    order.assigned_technician_id == technician.id
+                    and order.scheduled_date == dispatch_date
+                    and order.status
+                    in {WorkOrderStatus.SCHEDULED, WorkOrderStatus.IN_PROGRESS}
+                )
+                if not missing_skills and (
+                    is_current_assignment or available_hours >= order.estimated_hours
+                ):
+                    technician_options.append(
+                        {
+                            "technician_id": technician.id,
+                            "available_hours": available_hours,
+                        }
+                    )
+                elif not missing_skills and available_hours > 0:
+                    warnings.append("technician_capacity_tight")
+            technician_options.sort(
+                key=lambda option: (
+                    str(option["technician_id"]) != order.assigned_technician_id,
+                    -int(option["available_hours"]),
+                    str(option["technician_id"]),
+                )
+            )
+            if not technician_options:
+                blockers.append("technician_unavailable")
+
+            for invoice in snapshot.invoices:
+                if (
+                    invoice.customer_id == order.customer_id
+                    and invoice.status == InvoiceStatus.ISSUED
+                ):
+                    subtotal = invoice.subtotal()
+                    open_invoice_count += 1
+                    open_invoice_amounts[subtotal.currency] = (
+                        open_invoice_amounts.get(subtotal.currency, 0.0)
+                        + float(subtotal.amount)
+                    )
+
+            risk_score = self._work_order_risk(
+                order,
+                customer,
+                shortages,
+                [str(option["technician_id"]) for option in technician_options],
+                snapshot.as_of,
+            )
+            if breach_days:
+                risk_score += min(10 + breach_days * 3, 30)
+            if not covered_contract_ids:
+                risk_score += 5
+            if overdue_asset_ids:
+                risk_score += min(len(overdue_asset_ids) * 4, 12)
+            if open_invoice_count:
+                risk_score += min(open_invoice_count * 2, 8)
+            risk_score = min(risk_score, 100)
+
+            recommended_technician_id = (
+                str(technician_options[0]["technician_id"])
+                if technician_options
+                else None
+            )
+            if (
+                recommended_technician_id
+                and not blockers
+                and order.status
+                not in {WorkOrderStatus.SCHEDULED, WorkOrderStatus.IN_PROGRESS}
+            ):
+                capacity_key = (recommended_technician_id, dispatch_date)
+                reserved_hours[capacity_key] = (
+                    reserved_hours.get(capacity_key, 0)
+                    + order.estimated_hours
+                )
+
+            row = {
+                "work_order_id": order.id,
+                "customer_id": order.customer_id,
+                "customer_risk_tier": customer_risk_tier,
+                "title": order.title,
+                "priority": order.priority.value,
+                "status": order.status.value,
+                "requested_date": order.requested_date.isoformat(),
+                "request_age_days": age_days,
+                "sla_due_on": sla_due_on.isoformat(),
+                "breach_days": breach_days,
+                "risk_score": risk_score,
+                "blockers": sorted(set(blockers)),
+                "warnings": sorted(set(warnings)),
+                "shortages": shortages,
+                "covered_contract_ids": sorted(covered_contract_ids),
+                "overdue_asset_ids": sorted(overdue_asset_ids),
+                "recommended_technician_id": recommended_technician_id,
+                "technician_options": technician_options,
+                "estimated_costs": _dispatch_estimated_costs(
+                    order.labor_rate.currency,
+                    float(order.estimated_labor_total().amount),
+                    estimated_part_costs,
+                ),
+                "open_invoice_amounts": {
+                    currency: round(amount, 2)
+                    for currency, amount in open_invoice_amounts.items()
+                },
+            }
+            queue_name = _dispatch_queue_name(
+                order.priority,
+                breach_days,
+                risk_score,
+                blockers,
+            )
+            row["queue"] = queue_name
+            if queue_name == "escalated":
+                escalated.append(row)
+            elif queue_name == "blocked":
+                blocked.append(row)
+            else:
+                ready.append(row)
+
+        sort_key = lambda row: (-int(row["risk_score"]), str(row["sla_due_on"]), str(row["work_order_id"]))
+        ready.sort(key=sort_key)
+        blocked.sort(key=sort_key)
+        escalated.sort(key=sort_key)
+
+        capacity_forecast: list[dict[str, Any]] = []
+        for offset in range(horizon_days):
+            service_day = snapshot.as_of + timedelta(days=offset)
+            technician_rows = []
+            for technician in snapshot.technicians:
+                if not technician.active:
+                    continue
+                booked_hours = 0
+                booked_orders = []
+                for scheduled_order in snapshot.work_orders:
+                    if (
+                        scheduled_order.assigned_technician_id == technician.id
+                        and scheduled_order.scheduled_date == service_day
+                        and scheduled_order.status
+                        not in {WorkOrderStatus.COMPLETED, WorkOrderStatus.CANCELLED}
+                    ):
+                        booked_hours += scheduled_order.estimated_hours
+                        booked_orders.append(scheduled_order.id)
+                technician_rows.append(
+                    {
+                        "technician_id": technician.id,
+                        "capacity_hours": technician.daily_capacity_hours,
+                        "booked_hours": booked_hours,
+                        "available_hours": max(
+                            technician.daily_capacity_hours - booked_hours,
+                            0,
+                        ),
+                        "booked_orders": sorted(booked_orders),
+                    }
+                )
+            capacity_forecast.append(
+                {
+                    "date": service_day.isoformat(),
+                    "technicians": technician_rows,
+                    "available_hours": sum(
+                        int(row["available_hours"]) for row in technician_rows
+                    ),
+                }
+            )
+
+        all_rows = ready + blocked + escalated
+        estimated_costs: dict[str, float] = {}
+        for row in all_rows:
+            for currency, amount in row["estimated_costs"].items():
+                estimated_costs[currency] = (
+                    estimated_costs.get(currency, 0.0) + float(amount)
+                )
+        return {
+            "as_of": snapshot.as_of.isoformat(),
+            "horizon_days": horizon_days,
+            "queues": {
+                "ready": ready,
+                "blocked": blocked,
+                "escalated": escalated,
+            },
+            "summary": {
+                "total": len(all_rows),
+                "ready": len(ready),
+                "blocked": len(blocked),
+                "escalated": len(escalated),
+                "sla_breaches": sum(1 for row in all_rows if int(row["breach_days"]) > 0),
+                "orders_with_shortages": sum(1 for row in all_rows if row["shortages"]),
+                "orders_without_technicians": sum(
+                    1 for row in all_rows if row["recommended_technician_id"] is None
+                ),
+                "estimated_costs": {
+                    currency: round(amount, 2)
+                    for currency, amount in estimated_costs.items()
+                },
+            },
+            "capacity_forecast": capacity_forecast,
+        }
 
     def _work_order_risk(
         self,
@@ -320,4 +738,3 @@ class OperationalControlTower:
                     }
                 )
         return sorted(pressure, key=lambda row: (-row["shortfall"], row["sku"]))
-

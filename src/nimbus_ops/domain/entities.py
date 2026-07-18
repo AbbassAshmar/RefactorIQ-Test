@@ -138,7 +138,8 @@ class Invoice:
     lines: list[InvoiceLine]
 
     def subtotal(self) -> Money:
-        total = Money(Decimal("0.00"))
+        currency = self.lines[0].unit_price.currency if self.lines else "USD"
+        total = Money(Decimal("0.00"), currency)
         for line in self.lines:
             total = total.add(line.total())
         return total

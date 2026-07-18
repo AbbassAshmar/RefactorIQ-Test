@@ -124,9 +124,9 @@ class OperationsFacade:
         invoice = self.billing_service.create_invoice_from_work_order(work_order_id, date.today())
         return InvoiceResponse(**invoice.__dict__)
 
-    def control_tower_snapshot(self) -> dict[str, object]:
+    def _build_control_tower_snapshot(self, as_of: date | None = None) -> ControlTowerSnapshot:
         with self.uow as uow:
-            snapshot = ControlTowerSnapshot(
+            return ControlTowerSnapshot(
                 customers=uow.customers.list(),
                 work_orders=uow.work_orders.list(),
                 assets=uow.assets.list(),
@@ -135,21 +135,37 @@ class OperationsFacade:
                 notifications=uow.notifications.list(),
                 technicians=uow.technicians.list(),
                 inventory=uow.inventory.list(),
-                as_of=date.today(),
+                as_of=as_of or date.today(),
             )
-            return self.control_tower.build_snapshot(snapshot)
 
-    def legacy_operations_export(self) -> dict[str, object]:
-        with self.uow as uow:
-            snapshot = ControlTowerSnapshot(
-                customers=uow.customers.list(),
-                work_orders=uow.work_orders.list(),
-                assets=uow.assets.list(),
-                contracts=uow.contracts.list(),
-                invoices=uow.invoices.list(),
-                notifications=uow.notifications.list(),
-                technicians=uow.technicians.list(),
-                inventory=uow.inventory.list(),
-                as_of=date.today(),
-            )
-            return self.legacy_exporter.export(snapshot)
+    def control_tower_snapshot(self, as_of: date | None = None) -> dict[str, object]:
+        return self.control_tower.build_snapshot(
+            self._build_control_tower_snapshot(as_of)
+        )
+
+    def dispatch_plan(
+        self,
+        as_of: date | None = None,
+        horizon_days: int = 14,
+        include_scheduled: bool = False,
+    ) -> dict[str, object]:
+        return self.control_tower.build_dispatch_plan(
+            self._build_control_tower_snapshot(as_of),
+            horizon_days=horizon_days,
+            include_scheduled=include_scheduled,
+        )
+
+    def backlog_priorities(self, as_of: date | None = None) -> list[dict[str, object]]:
+        return self.control_tower.prioritize_backlog(
+            self._build_control_tower_snapshot(as_of)
+        )
+
+    def legacy_dispatch_manifest(self, as_of: date | None = None) -> dict[str, object]:
+        return self.legacy_exporter.export_dispatch_manifest(
+            self._build_control_tower_snapshot(as_of)
+        )
+
+    def legacy_operations_export(self, as_of: date | None = None) -> dict[str, object]:
+        return self.legacy_exporter.export(
+            self._build_control_tower_snapshot(as_of)
+        )

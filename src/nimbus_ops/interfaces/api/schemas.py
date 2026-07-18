@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
@@ -192,3 +192,114 @@ class OperationsAdminResponse(BaseModel):
     contracts: int
     invoices: int
     notifications: int
+
+
+class DispatchShortageResponse(BaseModel):
+    sku: str
+    required: int
+    available: int
+
+
+class DispatchTechnicianOptionResponse(BaseModel):
+    technician_id: str
+    available_hours: int
+
+
+class DispatchOrderResponse(BaseModel):
+    work_order_id: str
+    customer_id: str
+    customer_risk_tier: Literal[
+        "standard",
+        "unknown",
+        "delinquent",
+        "paused",
+        "credit_hold",
+        "credit_watch",
+        "priority",
+    ]
+    title: str
+    priority: WorkOrderPriority
+    status: WorkOrderStatus
+    requested_date: date
+    request_age_days: int
+    sla_due_on: date
+    breach_days: int
+    risk_score: int
+    queue: Literal["ready", "blocked", "escalated"]
+    blockers: list[str]
+    warnings: list[str]
+    shortages: list[DispatchShortageResponse]
+    covered_contract_ids: list[str]
+    overdue_asset_ids: list[str]
+    recommended_technician_id: str | None
+    technician_options: list[DispatchTechnicianOptionResponse]
+    estimated_costs: dict[str, float]
+    open_invoice_amounts: dict[str, float]
+
+
+class DispatchQueuesResponse(BaseModel):
+    ready: list[DispatchOrderResponse]
+    blocked: list[DispatchOrderResponse]
+    escalated: list[DispatchOrderResponse]
+
+
+class DispatchPlanSummaryResponse(BaseModel):
+    total: int
+    ready: int
+    blocked: int
+    escalated: int
+    sla_breaches: int
+    orders_with_shortages: int
+    orders_without_technicians: int
+    estimated_costs: dict[str, float]
+
+
+class TechnicianCapacityResponse(BaseModel):
+    technician_id: str
+    capacity_hours: int
+    booked_hours: int
+    available_hours: int
+    booked_orders: list[str]
+
+
+class DailyCapacityResponse(BaseModel):
+    date: date
+    technicians: list[TechnicianCapacityResponse]
+    available_hours: int
+
+
+class DispatchPlanResponse(BaseModel):
+    as_of: date
+    horizon_days: int
+    queues: DispatchQueuesResponse
+    summary: DispatchPlanSummaryResponse
+    capacity_forecast: list[DailyCapacityResponse]
+
+
+class BacklogPriorityResponse(BaseModel):
+    work_order_id: str
+    priority_score: int
+
+
+class LegacyDispatchManifestRowResponse(BaseModel):
+    work_order_id: str
+    customer_id: str
+    sla_due_on: date
+    breach_days: int
+    risk_score: int
+    queue: Literal["ready", "blocked", "escalated"]
+    blockers: list[str]
+    estimated_costs: dict[str, float]
+
+
+class LegacyDispatchManifestTotalsResponse(BaseModel):
+    orders: int
+    ready: int
+    blocked: int
+    escalated: int
+
+
+class LegacyDispatchManifestResponse(BaseModel):
+    generated_on: date
+    rows: list[LegacyDispatchManifestRowResponse]
+    totals: LegacyDispatchManifestTotalsResponse
