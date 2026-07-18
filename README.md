@@ -45,6 +45,9 @@ Useful endpoints:
 - `GET /api/notifications` and `POST /api/notifications`
 - `GET /api/admin/operations/summary`
 - `GET /api/admin/operations/control-tower`
+- `GET /api/admin/operations/dispatch-plan`
+- `GET /api/admin/operations/backlog-priorities`
+- `GET /api/admin/operations/dispatch-manifest`
 - `GET /api/admin/operations/export`
 
 ## Tests
@@ -97,13 +100,20 @@ Invoke-RestMethod -Method Post http://127.0.0.1:8000/api/work-orders `
   Their repeated search, entity lookup, due-date, serialization, and status
   handling logic is intentionally distributed across layers to mimic a growing
   production codebase.
-- The fixture also contains intentional `TYPE_CHECKING` dependency cycles for
-  architecture testing: domain models point back to their services, the asset
-  repository points back to the repository aggregate, and API schemas point back
-  to the operations façade. These imports are visible to the AST dependency
-  graph but do not execute at runtime.
+- The fixture retains intentional `TYPE_CHECKING` dependency cycles for
+  architecture testing: domain models point back to their services and API
+  schemas point back to the operations façade. These imports are visible to the
+  AST dependency graph but do not execute at runtime. The former infrastructure
+  cycle was removed: the repository aggregate composes focused repositories,
+  while focused repository modules are prevented by a regression test from
+  importing the aggregate in return.
 - `application/services/operational_control_tower.py` and
   `infrastructure/legacy_operations_exporter.py` are intentionally high-risk
   refactoring targets: they combine customer, work-order, inventory, asset,
   contract, invoice, technician, and notification data with nested loops,
   deeply branched scoring, repeated grouping, and overlapping export logic.
+  The dispatch-planning feature adds SLA breach detection, customer risk tiers,
+  technician capacity forecasting, contract coverage, stock blockers, backlog
+  ranking, and a separately evolved legacy partner manifest. Its repeated SLA,
+  queue, normalization, and cost helpers intentionally provide exact duplicate
+  blocks alongside the semantic duplication in the two planning paths.

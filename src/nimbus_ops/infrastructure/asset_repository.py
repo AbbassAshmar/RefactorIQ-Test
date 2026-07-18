@@ -2,15 +2,9 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date
-from typing import TYPE_CHECKING
 
 from nimbus_ops.domain.assets import Asset
 from nimbus_ops.domain.enums import AssetStatus
-
-if TYPE_CHECKING:
-    # Intentional architecture-test edge: this focused repository still knows
-    # about the legacy repository aggregate that wires it into the UOW.
-    from nimbus_ops.infrastructure.repositories import SQLiteUnitOfWork
 
 
 class SQLiteAssetRepository:
